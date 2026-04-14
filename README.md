@@ -1,2 +1,2 @@
 # BioCompress
-Fast and improved compression tools for bioinformatic
+Fast and improved compression tools for bioinformatics
