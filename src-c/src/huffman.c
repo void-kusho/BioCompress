@@ -10,18 +10,6 @@
 #include <stdbool.h>
 #include "huffman.h"
 
-// Symbol mapping per D-08: A=0, C=1, G=2, T=3
-// N maps to A, U maps to T for simplicity
-static uint8_t char_to_symbol(char c) {
-    switch (c) {
-        case 'A': case 'a': return 0;
-        case 'C': case 'c': return 1;
-        case 'G': case 'g': return 2;
-        case 'T': case 't': return 3;
-        default: return 0;  // Map N to A, U to T
-    }
-}
-
 // Huffman context structure
 struct huffman_ctx {
     huffman_code_t code;  // Canonical code table
@@ -68,8 +56,9 @@ int huffman_encode(huffman_ctx_t* ctx,
         return BIOCOMPRESS_ERR_INVALID_INPUT;
     }
     
-    // Calculate output size (2 bits per symbol, round up to bytes)
-    size_t out_size = (num_symbols * 2 + 7) / 8 + 1;  // +1 for length prefix
+    // Calculate output size: 4-byte length prefix + bitstream
+    size_t bitstream_size = (num_symbols * 2 + 7) / 8;
+    size_t out_size = 4 + bitstream_size;  // 4-byte length prefix + bitstream
     
     uint8_t* out = (uint8_t*)malloc(out_size);
     if (out == NULL) {
@@ -81,7 +70,7 @@ int huffman_encode(huffman_ctx_t* ctx,
     memcpy(out, &len, 4);
     
     // Encode each symbol as 2 bits
-    size_t bit_pos = 16;  // Start after length prefix (16 bits)
+    size_t bit_pos = 32;  // Start after 4-byte length prefix (32 bits)
     for (size_t i = 0; i < num_symbols; i++) {
         uint8_t symbol = symbols[i] % HUFFMAN_SYMBOLS;
         uint8_t code = ctx->code.code[symbol];
@@ -90,12 +79,17 @@ int huffman_encode(huffman_ctx_t* ctx,
         size_t byte_idx = bit_pos / 8;
         size_t bit_offset = bit_pos % 8;
         
-        out[byte_idx] &= ~(0x03 << bit_offset);
-        out[byte_idx] |= (code & 0x03) << bit_offset;
-        
-        // Handle spanning bytes
-        if (bit_offset == 7) {
-            out[byte_idx + 1] = code >> 1;
+        // Handle crossing byte boundary
+        if (bit_offset <= 6) {
+            // Both bits fit in current byte
+            out[byte_idx] &= ~(0x03 << bit_offset);
+            out[byte_idx] |= (code & 0x03) << bit_offset;
+        } else {
+            // Split across bytes: bit 0 in current byte, bit 1 in next byte
+            out[byte_idx] &= ~(0x01 << bit_offset);
+            out[byte_idx] |= (code & 0x01) << bit_offset;
+            out[byte_idx + 1] &= ~0x01;
+            out[byte_idx + 1] |= (code >> 1) & 0x01;
         }
         
         bit_pos += 2;
@@ -130,7 +124,7 @@ int huffman_decode(huffman_ctx_t* ctx,
     }
     
     // Decode each 2-bit symbol
-    size_t bit_pos = 16;  // Start after length prefix
+    size_t bit_pos = 32;  // Start after 4-byte length prefix (32 bits)
     for (size_t i = 0; i < num_symbols; i++) {
         size_t byte_idx = bit_pos / 8;
         size_t bit_offset = bit_pos % 8;
@@ -140,7 +134,20 @@ int huffman_decode(huffman_ctx_t* ctx,
             return BIOCOMPRESS_ERR_INVALID_INPUT;
         }
         
-        uint8_t code = (input[byte_idx] >> bit_offset) & 0x03;
+        // Handle crossing byte boundary
+        uint8_t code;
+        if (bit_offset <= 6) {
+            // Both bits in current byte
+            code = (input[byte_idx] >> bit_offset) & 0x03;
+        } else {
+            // Split across bytes: bit 0 in current byte, bit 1 in next byte
+            if (byte_idx + 1 >= input_size) {
+                free(out);
+                return BIOCOMPRESS_ERR_INVALID_INPUT;
+            }
+            code = ((input[byte_idx] >> bit_offset) & 0x01) | 
+                   ((input[byte_idx + 1] & 0x01) << 1);
+        }
         out[i] = code;
         
         bit_pos += 2;

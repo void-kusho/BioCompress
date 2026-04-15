@@ -28,5 +28,7 @@ int biocompress_decompress_file(const char* input_path, const char* output_path)
 int biocompress_compress_buffer(const uint8_t* input, size_t input_size,
                                 uint8_t** output, size_t* output_size,
                                 int compression_level);
+int biocompress_decompress_buffer(const uint8_t* input, size_t input_size,
+                                  uint8_t** output, size_t* output_size);
 
 #endif // BIOCOMPRESS_COMPRESS_H

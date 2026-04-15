@@ -8,11 +8,48 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 #include <zlib.h>
 #include "compress.h"
 #include "huffman.h"
 #include "ans.h"
 #include "parser.h"
+
+// Extract sequence from FASTA content (skip header line)
+static size_t extract_fasta_sequence(const uint8_t* input, size_t input_size,
+                                     const uint8_t** sequence_out) {
+    // Find first newline
+    const uint8_t* newline = (const uint8_t*)memchr(input, '\n', input_size);
+    if (newline == NULL || input[0] != '>') {
+        // Not FASTA format, return as-is
+        *sequence_out = input;
+        return input_size;
+    }
+    
+    // Skip past the newline (start of sequence)
+    size_t header_len = (newline - input) + 1;
+    *sequence_out = input + header_len;
+    return input_size - header_len;
+}
+
+// Rebuild FASTA with original header
+static int rebuild_fasta(const char* original_header, size_t header_len,
+                         const uint8_t* sequence, size_t seq_len,
+                         uint8_t** output, size_t* output_size) {
+    // Allocate: header + newline + sequence + newline
+    *output_size = header_len + 1 + seq_len + 1;
+    *output = (uint8_t*)malloc(*output_size);
+    if (*output == NULL) {
+        return BIOCOMPRESS_ERR_MEMORY;
+    }
+    
+    memcpy(*output, original_header, header_len);
+    (*output)[header_len] = '\n';
+    memcpy(*output + header_len + 1, sequence, seq_len);
+    (*output)[header_len + 1 + seq_len] = '\n';
+    
+    return BIOCOMPRESS_OK;
+}
 
 // Simple checksum calculation (CRC32 per D-13)
 static uint32_t calculate_checksum(const uint8_t* data, size_t len) {
