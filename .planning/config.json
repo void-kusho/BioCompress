@@ -1,0 +1,13 @@
+{
+  "workflow": "new-project",
+  "created": "2026-04-14",
+  "auto": true,
+  "preferences": {
+    "dev_language": "C + Rust (mixed)",
+    "bio_data_types": ["FASTA", "FASTQ"],
+    "target_users": ["Researchers", "Developers"],
+    "cli_interface": "Library + CLI",
+    "compression_goal": "Configurable",
+    "platforms": ["Linux", "Windows"]
+  }
+}
