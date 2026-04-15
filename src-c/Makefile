@@ -3,6 +3,7 @@
 
 CC = gcc
 CFLAGS = -O3 -Wall -Wextra -std=c11 -Iinclude
+LIBS = -lz
 TARGET = biocompress
 SOURCES = $(wildcard src/*.c)
 OBJECTS = $(SOURCES:.c=.o)
@@ -13,6 +14,7 @@ all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
 	ar rcs lib$(TARGET).a $(OBJECTS)
+	$(CC) -shared -fPIC -o lib$(TARGET).so $(OBJECTS) $(LIBS)
 
 %.o: src/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
