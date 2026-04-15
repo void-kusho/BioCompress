@@ -1,3 +1,4 @@
+use biocompress_lib::{compress_file, decompress_file};
 /**
  * Biocompress - Rust CLI
  * Command-line interface for the compression library
@@ -71,19 +72,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if level > 5 {
                 return Err("Compression level must be between 1 and 5".into());
             }
+
+            compress_file(
+                input.to_str().unwrap_or_default(),
+                output.to_str().unwrap_or_default(),
+                level as i32,
+            )
+            .map_err(|e| format!("Compression failed: {}", e))?;
+
             println!(
-                "Compressing {} -> {} (level {})",
+                "Successfully compressed {} -> {} (level {})",
                 input.display(),
                 output.display(),
                 level
             );
-            // TODO: Implement actual compression
             Ok(())
         }
 
         Commands::Decompress { input, output } => {
-            println!("Decompressing {} -> {}", input.display(), output.display());
-            // TODO: Implement actual decompression
+            decompress_file(
+                input.to_str().unwrap_or_default(),
+                output.to_str().unwrap_or_default(),
+            )
+            .map_err(|e| format!("Decompression failed: {}", e))?;
+
+            println!(
+                "Successfully decompressed {} -> {}",
+                input.display(),
+                output.display()
+            );
             Ok(())
         }
 
