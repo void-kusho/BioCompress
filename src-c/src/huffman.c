@@ -10,6 +10,31 @@
 #include <stdbool.h>
 #include "huffman.h"
 
+// Convert ASCII DNA to numeric (A=0, C=1, G=2, T=3)
+// Only converts ACGT; other characters pass through as their raw byte value
+// NOTE: This works because Huffman only encodes the 4 DNA symbols (0-3)
+// Any non-DNA characters must be handled at higher levels
+static uint8_t ascii_to_numeric(uint8_t c) {
+    switch (c) {
+        case 'A': case 'a': return 0;
+        case 'C': case 'c': return 1;
+        case 'G': case 'g': return 2;
+        case 'T': case 't': return 3;
+        default: return c;  // Pass through non-ACGT (like newlines)
+    }
+}
+
+// Convert numeric to ASCII DNA (0=A, 1=C, 2=G, 3=T)
+static uint8_t numeric_to_ascii(uint8_t n) {
+    switch (n) {
+        case 0: return 'A';
+        case 1: return 'C';
+        case 2: return 'G';
+        case 3: return 'T';
+        default: return n;  // Pass through non-0-3
+    }
+}
+
 // Huffman context structure
 struct huffman_ctx {
     huffman_code_t code;  // Canonical code table
@@ -69,10 +94,10 @@ int huffman_encode(huffman_ctx_t* ctx,
     uint32_t len = (uint32_t)num_symbols;
     memcpy(out, &len, 4);
     
-    // Encode each symbol as 2 bits
+    // Encode each symbol as 2 bits (with ASCII→numeric conversion)
     size_t bit_pos = 32;  // Start after 4-byte length prefix (32 bits)
     for (size_t i = 0; i < num_symbols; i++) {
-        uint8_t symbol = symbols[i] % HUFFMAN_SYMBOLS;
+        uint8_t symbol = ascii_to_numeric(symbols[i]) % HUFFMAN_SYMBOLS;
         uint8_t code = ctx->code.code[symbol];
         
         // Write 2 bits
@@ -148,7 +173,8 @@ int huffman_decode(huffman_ctx_t* ctx,
             code = ((input[byte_idx] >> bit_offset) & 0x01) | 
                    ((input[byte_idx + 1] & 0x01) << 1);
         }
-        out[i] = code;
+        // Convert numeric to ASCII DNA
+        out[i] = numeric_to_ascii(code);
         
         bit_pos += 2;
     }
