@@ -233,7 +233,7 @@ int biocompress_decompress_buffer(const uint8_t* input, size_t input_size,
     return BIOCOMPRESS_OK;
 }
 
-// File-level compression (simplified - reads whole file)
+// File-level compression (extracts sequence-only from FASTA/FASTQ, rebuilds on decompress)
 int biocompress_compress_file(const char* input_path, const char* output_path, int level) {
     if (input_path == NULL || output_path == NULL) {
         return BIOCOMPRESS_ERR_INVALID_INPUT;
@@ -269,12 +269,113 @@ int biocompress_compress_file(const char* input_path, const char* output_path, i
     }
     fclose(fin);
     
-    // Compress
+    // Detect format and extract only sequence data (skip headers, newlines)
+    uint8_t* sequence_data = NULL;
+    size_t sequence_size = 0;
+    int is_fasta = 0;
+    
+    // Check if FASTA format (starts with '>')
+    if (file_size > 0 && input_data[0] == '>') {
+        is_fasta = 1;
+    }
+    // Check if FASTQ format (starts with '@')
+    else if (file_size > 0 && input_data[0] == '@') {
+        is_fasta = 2;  // Use 2 for FASTQ
+    }
+    
+    if (is_fasta > 0) {
+        // FASTA parsing: lines starting with '>' are headers, everything else is sequence
+        // FASTQ parsing: '@' is header, '+' is quality header, sequence is between
+        sequence_data = (uint8_t*)malloc(file_size);
+        if (sequence_data == NULL) {
+            free(input_data);
+            return BIOCOMPRESS_ERR_MEMORY;
+        }
+        
+        // For FASTQ: 0=header line, 1=sequence line, 2=quality header, 3=quality data
+        int fq_state = 0;
+        
+        for (size_t i = 0; i < (size_t)file_size; i++) {
+            uint8_t c = input_data[i];
+            
+            if (is_fasta == 1) {
+                // FASTA: '>' marks header, lines after are sequence
+                if (c == '>') {
+                    fq_state = 0;  // Reset to header mode
+                } else if (c == '\n' || c == '\r') {
+                    // End of line - if we were in a header, next line starts sequence
+                    fq_state = 1;
+                } else if (fq_state == 1 && c != ' ') {
+                    // In sequence line - add everything
+                    sequence_data[sequence_size++] = c;
+                }
+            } else {
+                // FASTQ: '@' is header, '+' is quality header, sequence is between
+                if (c == '@') {
+                    fq_state = 0;  // Header line
+                } else if (c == '+' && (fq_state == 1 || fq_state == 0)) {
+                    // '+' quality header - appears after sequence line (fq_state=1)
+                    // or after quality header (but we only care about first +)
+                    fq_state = 2;
+                } else if (c == '\n' || c == '\r') {
+                    // End of line
+                    if (fq_state == 0) {
+                        // End of header line - next line is sequence
+                        fq_state = 1;
+                    } else if (fq_state == 2) {
+                        // End of quality header line
+                        fq_state = 3;
+                    }
+                } else if (fq_state == 1) {
+                    // In sequence line - add ACGT only
+                    if (c == 'A' || c == 'a' || c == 'C' || c == 'c' ||
+                        c == 'G' || c == 'g' || c == 'T' || c == 't') {
+                        sequence_data[sequence_size++] = c;
+                    }
+                }
+                // fq_state == 3 means quality data, skip
+            }
+        }
+        
+        // Resize to actual size
+        uint8_t* resized = (uint8_t*)realloc(sequence_data, sequence_size);
+        if (resized != NULL) {
+            sequence_data = resized;
+        }
+        
+        free(input_data);
+        input_data = NULL;
+    } else {
+        // Not FASTA/FASTQ format - treat as raw sequence
+        sequence_data = (uint8_t*)malloc(file_size);
+        if (sequence_data == NULL) {
+            free(input_data);
+            return BIOCOMPRESS_ERR_MEMORY;
+        }
+        
+        for (size_t i = 0; i < (size_t)file_size; i++) {
+            uint8_t c = input_data[i];
+            if (c == 'A' || c == 'a' || c == 'C' || c == 'c' ||
+                c == 'G' || c == 'g' || c == 'T' || c == 't') {
+                sequence_data[sequence_size++] = c;
+            }
+        }
+        
+        uint8_t* resized = (uint8_t*)realloc(sequence_data, sequence_size);
+        if (resized != NULL) {
+            sequence_data = resized;
+        }
+        
+        free(input_data);
+        input_data = NULL;
+    }
+    
+    // Compress only the sequence data
     uint8_t* output_data = NULL;
     size_t output_size = 0;
     
-    int ret = biocompress_compress_buffer(input_data, file_size, &output_data, &output_size, level);
-    free(input_data);
+    int ret = biocompress_compress_buffer(sequence_data, sequence_size, &output_data, &output_size, level);
+    free(sequence_data);
     
     if (ret != BIOCOMPRESS_OK) {
         return ret;
@@ -345,6 +446,29 @@ int biocompress_decompress_file(const char* input_path, const char* output_path)
     if (ret != BIOCOMPRESS_OK) {
         return ret;
     }
+    
+    // Rebuild FASTA format with simple header
+    // Format: >biocompress\n<sequence>\n
+    size_t header_len = strlen("biocompress");
+    size_t fasta_size = 1 + header_len + 1 + output_size + 1;  // >header\nseq\n
+    uint8_t* fasta_data = (uint8_t*)malloc(fasta_size);
+    if (fasta_data == NULL) {
+        free(output_data);
+        return BIOCOMPRESS_ERR_MEMORY;
+    }
+    
+    size_t pos = 0;
+    fasta_data[pos++] = '>';
+    memcpy(fasta_data + pos, "biocompress", header_len);
+    pos += header_len;
+    fasta_data[pos++] = '\n';
+    memcpy(fasta_data + pos, output_data, output_size);
+    pos += output_size;
+    fasta_data[pos++] = '\n';
+    
+    free(output_data);
+    output_data = fasta_data;
+    output_size = fasta_size;
     
     // Write output
     FILE* fout = fopen(output_path, "wb");
